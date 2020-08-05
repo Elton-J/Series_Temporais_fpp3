@@ -1,0 +1,903 @@
+---
+title: 'Forecasting: Principles and Practice'
+subtitle: "Cap.5: Forecaster's Toolbox"
+author: "Elton Júnior"
+date: "29/07/2020"
+output:
+  html_document:
+    output: journal
+    toc: true
+    number_sections: true
+    code_folding: show
+    fig.align: center
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packs, warning=FALSE, message=FALSE}
+library(fpp3)
+library(GGally)
+library(fpp2)
+```
+
+
+# A Tidy Forecast worflow
+
+  Para ilustrar o processo, ajustaremos modelos de tendências lineares aos dados nacionais do PIB (GDP)
+armazenados em `global_economy`
+  
+
+## Data Preparation (Tidy)
+
+  O primeiro passo na previsão é preparar os dados no formato correto. Esse processo pode envolver o
+carregamento de dados, identificar valores ausentes, filtrar as séries temporais e outras tarefas de
+pré-processamento. A funcionalidade fornecida pelo `tsibble` e outros pacotes no tidyverse simplifica
+substancialmente esta etapa.
+
+  Muitos modelos têm requisitos de dados diferentes, alguns exigem que a série esteja no tempo certo, outros exigem não ter valores ausentes. A verificação de seus dados é uma etapa essencial para a
+compreensão de seus recursos e é útil antes que os modelos sejam estimados.
+
+  A maneira como seus dados são preparados também pode ser usada para explorar diferentes recursos da série temporal. Como veremos mais adiante, o pré-processamento de seu conjunto de dados é uma etapa importante na avaliação do desempenho do modelo usando a validação cruzada.
+
+  Para o nosso exemplo, a preparação dos dados já foi feita na criação do `tsibble global_economy`.
+  
+## Data Visualization
+
+```{r gdp_brazil, fig.align='center'}
+global_economy %>%
+  filter(Country == "Brazil") %>%
+  autoplot(GDP) +
+    ggtitle("PIB do Brasil") + 
+  ylab("$US billions") +
+  scale_x_continuous(breaks = seq(1960, 2020, 5)) +
+  theme_bw()
+```
+
+
+## Definição do modelo (Especificação)
+
+  Antes de ajustar um modelo aos dados, devemos primeiro descrevê-lo. Existem muitos modelos diferentes
+de séries temporais que podem ser usados para previsão, e grande parte deste livro é dedicada à descrição
+de vários modelos. A especificação de um modelo apropriado para os dados é essencial para produzir
+previsões apropriadas.
+
+  Os modelos em R são especificados usando funções de modelo, cada uma usando uma interface de fórmula
+(y ~ x). As variáveis de resposta (s) são especificadas à esquerda da fórmula e a estrutura do modelo é
+escrita à direita.
+
+  Por exemplo, um modelo linear (a ser discutido no Capítulo 7) que modela o PIB usando uma tendência
+linear pode ser especificado com `TSLM (PIB ~ trend())`.
+  
+  Nesse caso, a função de modelo é `TSLM()` (modelo linear de série temporal), a variável de resposta é 
+PIB e está sendo modelada usando *trend()* (uma função “especial” que especifica uma tendência linear).
+Examinaremos mais de perto como cada modelo pode ser especificado em suas respectivas seções.
+
+  As funções especiais usadas para definir a estrutura do modelo variam entre os modelos (pois cada
+modelo pode suportar estruturas diferentes). A seção “Special” da documentação para cada função de modelo lista essas funções especiais e como elas podem ser usadas.
+
+  O lado esquerdo da fórmula também suporta as transformações já discutidas (log, ...), que podem ser
+úteis para simplificar os padrões de séries temporais ou restringir as previsões a valores específicos.
+
+
+## Treinar o Modelo (Estimação)
+
+  Depois que um modelo apropriado é especificado, treinamos o modelo em alguns dados. Uma ou mais especificações do modelo podem ser estimadas usando a função `model()`.
+
+Para estimar o modelo em nosso exemplo, usamos:
+
+```{r fit_tslm, warning=FALSE, error=FALSE}
+print(paste0('Coluna Chave de Global Economy: ', tsibble::key_vars(global_economy)))# Cuntry é chave, assim será ajustado um modelo por País
+
+lm_trend <- global_economy %>%
+              model(lm_trend_model = TSLM(GDP ~ trend()))
+
+lm_trend %>% 
+  head(6)
+```
+
+
+  Isso ajusta um modelo de tendência linear aos dados do PIB para cada combinação de variáveis-chave 
+('Country') no tsibble. Neste exemplo, ele ajustará um modelo para cada um dos 263 países no conjunto de
+dados. O objeto resultante é uma tabela de modelo ou um "mable".
+
+## Verificar o desempenho do modelo (avaliar)
+
+  Após a montagem de um modelo, é importante verificar o desempenho dos dados. Existem várias
+ferramentas de diagnóstico disponíveis para verificar o comportamento do modelo e também medidas de
+precisão que permitem comparar um modelo com outro. Entraremos em mais detalhes.
+
+## Produzir previsões (Forecast)
+
+  Com um modelo apropriado especificado, estimado e verificado, é hora de produzir as previsões usando
+`forecast()`. A maneira mais fácil de usar essa função é especificando o número de observações futuras a
+serem previstas. Por exemplo, previsões para as próximas 10 observações podem ser geradas usando 
+*h = 10*. Também podemos usar linguagem natural; por exemplo, *h = "2 years"* pode ser usado para prever
+dois anos no futuro.
+
+  Em outras situações, pode ser mais conveniente fornecer um conjunto de dados de períodos futuros a
+serem previstos. Isso geralmente é necessário quando seu modelo usa informações adicionais dos dados,
+como variáveis para regressores exógenos. Dados adicionais exigidos pelo modelo podem ser incluídos no
+conjunto de dados de observações a serem previstas.
+
+```{r forecast_lm_trend}
+
+lm_trend %>%
+  forecast::forecast(h = "3 years") %>% 
+    head()
+
+```
+
+  Esta é uma tabela de previsão, ou "fable". Cada linha corresponde a um período de previsão para cada país. A coluna GDP contém a distribuição da previsão, enquanto a coluna `.mean` contém a previsão
+pontual ($\hat{y}$). A previsão pontual é a média da distribuição da previsão.
+
+As previsões podem ser plotadas juntamente com os dados históricos, usando `autoplot()` da seguinte maneira.
+
+```{r plo_forecast_brasil, fig.align='center'}
+lm_trend %>% 
+  forecast(h = 5) %>% 
+  filter(Country %in% c('Brazil', 'United States')) %>% 
+  autoplot(global_economy) +
+    ggtitle("PIB: Forecast de 5 anos") + 
+    ylab("$US billions")+
+  theme_bw()
+```
+
+# Alguns Métodos Simples de Forecast
+
+Alguns métodos de previsão são extremamente simples e surpreendentemente eficazes. Usaremos quatro
+métodos simples de previsão como referência neste livro.
+
+## Average method
+
+  Aqui, as previsões de todos os valores futuros são iguais à média dos dados históricos. Se deixarmos os dados históricos serem indicados por $(y_1, ..., y_T)$, então podemos escrever as previsões como:
+  
+$$\hat{y}_{T+h|T} = \overline{y} = \frac{1}{T}\sum_{i=1}^{T} y_i$$
+
+ 
+A notação $\hat{y}_{T+h|T}$ é uma abreviação para a estimativa de $y_{T+h}$ com base nos dados
+$(y_1, ..., y_T)$.
+
+No `R`, usa-se `fable::MEAN()`.
+
+
+## Naive Method
+
+  Para previsões ingênuas, simplesmente definimos todas as previsões como o valor da última observação. Isso é:
+
+$$\hat{y}_{T+h|T} = y_T$$
+
+
+Esse método funciona notavelmente bem para muitas séries temporais econômico-financeiras.
+
+Como uma previsão ingênua é ideal quando os dados seguem um Random Walk, eles também são chamados de
+previsões Random Walk.
+
+No `R`, usa-se `fable::NAIVE()` ou `fable::RW()`.
+
+## Naive Sazonal Method
+
+  Um método semelhante é útil para dados altamente sazonais. Nesse caso, definimos cada previsão como
+igual ao último valor observado do mesmo período do ano (por exemplo, o mesmo mês do ano anterior). Formalmente, a previsão de tempo $T+h$ é escrita como:
+
+$$\hat{y}_{T+h|T} = \hat{y}_{T+h-m(k + 1)}$$
+  
+  Onde m é o período sazonal e k é a parte inteira de $(h-1)/m$ (ou seja, o número de anos completos no
+período de previsão anterior ao tempo T + h).
+
+  Isso parece mais complicado do que realmente é. Por exemplo, com dados mensais, a previsão para todos
+os valores futuros de fevereiro é igual ao último valor observado em fevereiro. Com os dados
+trimestrais, a previsão de todos os valores futuros de Q2 é igual ao último valor observado de Q2 (onde
+Q2 significa o segundo trimestre). Regras semelhantes se aplicam a outros meses e trimestres e a outros
+períodos sazonais.
+
+No `R`, usa-se `fable::SNAIVE(Y ~ lag('year'))`.
+
+A função lag () é opcional quando os dados são trimestrais, porque, um modelo Naive sazonal precisará de um lag de um ano. No entanto, para algumas séries temporais, há mais de um período sazonal e, então,
+o lag necessário deve ser especificado.
+
+## Drift Method
+
+  Uma variação no método Naive é permitir que as previsões aumentem ou diminuam ao longo do tempo, onde
+a quantidade de mudança ao longo do tempo (chamada de desvio) é definida como a alteração média
+observada nos dados históricos. Assim, a previsão do tempo T + h é dada por:
+
+$$\hat{y}_{T+h|T} = \hat{y}_{T} + \frac{h}{T-1} \sum_{t=2}^{T}y_T-y_{T-1} = 
+\hat{y}_{T} + h (\frac{y_T - y_1}{T-1})$$
+
+Isso é equivalente a desenhar uma linha entre a primeira e a última observação e extrapolá-la para o
+futuro.
+
+No `R`, usa-se `fable::RW(Y ~ drift())`.
+
+
+## Exemplos
+
+### Produção trimestral de cerveja na Austrália
+
+   O gráfico abaixo mostra os 4 métodos aplicados à produção trimestral de cerveja australiana de 1992 a 2006, com as previsões comparadas com os valores reais nos próximos 3.5 anos.
+
+```{r beer_modelos, fig.align='center'}
+# Set training data from 1992 to 2006
+train_cerveja <- aus_production %>% 
+                    filter_index("1992 Q1" ~ "2006 Q4") # Quarter é o index do tsibble
+# Fit the models
+modelos_cerveja <- train_cerveja %>%
+                    model(Average = MEAN(Beer),
+                          Naive = NAIVE(Beer),
+                          Naive_Sazonal = SNAIVE(Beer),
+                          Drift = RW(Beer ~ drift()))
+# Generate forecasts for 14 quarters
+cervejas_forecast <- modelos_cerveja %>% 
+                      forecast(h = 14) # 14 trimestres = 3.5 anos
+# Plot forecasts against actual values
+cervejas_forecast %>%
+  autoplot(train_cerveja, level = NULL) + # Sem Intervalos de Confiança
+    autolayer(filter_index(aus_production, "2007 Q1" ~ .), Beer, color = "black") + # Plota valores depois de 2007 (Teste)
+    ggtitle("Forecasts for quarterly beer production") +
+    xlab("Year") +
+    ylab("Megalitres") +
+    guides(colour = guide_legend(title = "Método"))+
+  theme_bw()
+
+```
+
+  Nesse caso, apenas as previsões ingênuas sazonais estão próximas dos valores observados a partir de
+2007.
+
+### Preço diário de fechamento das ações do Google
+
+  À seguir, os 3 métodos  não-sazonais são aplicados ao preço diário das ações de fechamento do Google
+em 2015 e usados para prever um mês depois.
+
+  *Como os preços das ações não são observados todos os dias, primeiro configuramos um novo índice de tempo com base nos dias de negociação e não nos dias do calendário*
+  
+  
+  
+```{r google_modelos, fig.align='center'}
+# Re-index based on trading days
+google_stock <- gafa_stock %>%
+                  filter(Symbol == "GOOG") %>%
+                    mutate(day = row_number()) %>%
+                      update_tsibble(index = day, regular = TRUE)
+
+# Filter the year of interest
+google_2015 <- google_stock %>% 
+                filter(year(Date) == 2015)
+# Fit the models
+google_modelos <- google_2015 %>%
+                    model(Average = MEAN(Close),
+                          Naive = NAIVE(Close),
+                          Drift = RW(Close ~ drift())) # fica apenas para exemplo, o SNAIVE()
+
+# Produce forecasts for the 19 trading days in January 2015
+google_forecast <- google_modelos %>% 
+                      forecast(h = 19) # 19 dias
+
+# Ou (Mesmo Resultado)
+
+# A better way using a tsibble to determine the forecast horizons
+google_jan_2016 <- google_stock %>%
+                    filter(yearmonth(Date) == yearmonth("2016 Jan")) # Obtendo os valores reais pros 19 dias
+
+google_forecast <- google_modelos %>% 
+                      forecast(google_jan_2016)
+# Plot the forecasts
+google_forecast %>%
+  autoplot(google_2015, level = NULL) +
+    autolayer(google_jan_2016, Close, color='black') +
+    ggtitle("Google stock (daily ending 31 Dec 2015)") +
+    xlab("Day") + 
+    ylab("Closing Price (US$)") +
+    guides(colour = guide_legend(title = "Método")) +
+    theme_bw()
+```
+
+  Às vezes, um desses métodos simples será o melhor método de previsão disponível; mas, em muitos
+casos, esses métodos servirão como benchmarks em vez do método de escolha. Ou seja, quaisquer métodos
+de previsão que desenvolvemos serão comparados a esses métodos simples para garantir que o novo método
+seja melhor do que essas alternativas simples. Caso contrário, não vale a pena considerar o novo
+método.
+
+# Valores Ajustados($\hat{y}$) e Resíduos ($\epsilon$)
+
+## Valores Ajustados
+
+  Cada observação em uma série temporal pode ser prevista usando todas as observações anteriores.
+Chamamos isso de valores ajustados e eles são denotados por $\hat{y}_{T|T-1}$, significando a previsão
+de $y_t$ com base em observações $(y_1, ..., y_{T-1})$. Nós os usamos com tanta frequência que, às
+vezes, descartamos parte do subscrito e apenas escrevemos $\hat{y}_t$. Os valores ajustados sempre
+envolvem previsões em uma etapa ('one step forecast').
+
+  Na verdade, os valores ajustados geralmente não são previsões verdadeiras porque quaisquer parâmetros
+envolvidos no método de previsão são estimados usando todas as observações disponíveis na série
+temporal, incluindo observações futuras. Por exemplo, se usarmos o método da média, os valores ajustados são dados por:
+
+$$\hat{y}_{T} = \hat{c}$$
+ 
+  Onde $\hat{c}$ é a média calculada sobre todas as observações disponíveis, incluindo aquelas em
+momentos após t. Da mesma forma, para o método drift, o parâmetro drift é estimado usando todas as
+observações disponíveis. Nesse caso, os valores ajustados são dados por:
+
+$$\hat{y}_{T} = \hat{y}_{T-1} + \hat{c}$$
+ 
+  Onde $\hat{c} = (y_T-y_1)/(T-1)$. Nos dois casos, há um parâmetro a ser estimado a partir dos dados.
+O "chapéu" acima do c nos lembra que esta é uma estimativa. Quando a estimativa de c envolve
+observações após o tempo t, os valores ajustados não são previsões verdadeiras. Por outro lado,
+previsões Naive ou sazonais não envolvem nenhum parâmetro e, portanto, os valores ajustados são
+previsões verdadeiras nesses casos.
+
+## Resíduos
+
+  Os "resíduos" em um modelo de série temporal são o que resta após a montagem de um modelo. Para
+muitos modelos de séries temporais (mas não todos), os resíduos são iguais à diferença entre as
+observações e os valores ajustados correspondentes:
+
+$$\epsilon_{t} = y_t - \hat{y}_t$$
+
+
+  Os valores ajustados e os resíduos de um modelo podem ser obtidos usando a função `augment()`. No
+exemplo de produção de cerveja, salvamos os modelos ajustados como `modelos_cerveja`. Portanto, podemos
+simplesmente aplicar `augment()` a esse objeto para calcular os valores e resíduos ajustados para todos
+os modelos.
+
+```{r resid_yhat}
+modelos_cerveja %>% 
+  broom::augment() %>% 
+  head(5)
+```
+
+
+  Os resíduos são úteis para verificar se um modelo capturou adequadamente as informações nos dados. Se
+os padrões são observáveis nos resíduos, o modelo provavelmente pode ser melhorado. Examinaremos
+algumas ferramentas para explorar padrões em resíduos na próxima seção.
+
+## Diagnóstico dos Resíduos
+
+  Um bom método de previsão produzirá resíduos com as seguintes propriedades:
+
+ * Os resíduos não estão correlacionados. Se houver correlações entre resíduos, restarão informações nos resíduos que devem ser usadas no cálculo das previsões.
+ 
+* Os resíduos têm média zero. Se os resíduos tiverem uma média diferente de zero, as previsões serão
+tendenciosas.
+
+  Qualquer método de previsão que não satisfaça essas propriedades pode ser aprimorado. No entanto,
+isso não significa que os métodos de previsão que satisfazem essas propriedades não possam ser
+aprimorados.
+
+  É possível ter vários métodos de previsão diferentes para o mesmo conjunto de dados, todos os quais
+satisfazem essas propriedades. A verificação dessas propriedades é importante para verificar se um
+método está usando todas as informações disponíveis, mas não é uma boa maneira de selecionar um método
+de previsão.
+
+  Se uma dessas propriedades não for satisfeita, o método de previsão poderá ser modificado para
+fornecer melhores previsões. Ajustar o viés é fácil: se os resíduos tiverem uma média m, basta
+adicionar m a todas as previsões e o problema de viés está resolvido. Corrigir o problema de correlação
+é mais difícil e não abordaremos isso até o Capítulo 10.
+
+  Além dessas propriedades essenciais, é útil (mas não necessário) que os resíduos tenham também as duas
+propriedades a seguir:
+
+* Os resíduos têm variação constante.
+
+* Os resíduos são normalmente distribuídos.
+
+  Essas duas propriedades facilitam o cálculo dos intervalos de previsão. No entanto, um método de
+previsão que não satisfaz essas propriedades não pode necessariamente ser aprimorado. Às vezes, aplicar
+uma transformação Box-Cox pode ajudar com essas propriedades, mas, caso contrário, geralmente há pouco
+que você pode fazer para garantir que seus resíduos tenham variação constante e distribuição normal. Em
+vez disso, é necessária uma abordagem alternativa para obter intervalos de previsão. Novamente, não
+abordaremos como fazer isso até mais tarde neste livro.
+
+### Exemplo: Previsão do preço das ações de fechamento diário do Google
+
+  Continuaremos com o exemplo de preço das ações de fechamento diário do Google, no capítulo anterior.
+Para preços e índices do mercado de ações, o melhor método de previsão geralmente é o Naive. Ou seja,
+cada previsão é simplesmente igual ao último valor observado: $\hat{y}_t = y_{T-1}$
+
+ Portanto, os resíduos são simplesmente iguais à diferença entre observações consecutivas:
+
+$\epsilon_t = y_t - \hat{y}_{t} = y_t - y_{t-1}$
+ 
+
+  O gráfico a seguir mostra o preço das ações de fechamento diário do Google para os dias de negociação
+em 2015. O grande salto corresponde a 17 de julho de 2015, quando o preço subiu 16% devido a resultados
+inesperadamente fortes no segundo trimestre.
+
+```{r google_2015_resid, fig.align='center', warning=FALSE, message=FALSE}
+google_2015 %>%
+  autoplot(Close) +
+  xlab("Day") + 
+  ylab("Closing Price (US$)") +
+  ggtitle("Google Stock in 2015") +
+  theme_bw()
+
+aug <- google_2015 %>% 
+        model(NAIVE(Close)) %>%
+        broom::augment()
+
+aug %>% 
+  autoplot(.resid) +
+  xlab("Day") + 
+  ylab("") +
+  ggtitle("Residuals from Naive method") +
+  geom_hline(yintercept = 0, col = 'red', lty = 2) +
+  theme_bw()
+
+aug %>%
+  ggplot(aes(x = .resid)) +
+  geom_histogram() +
+  ggtitle("Histogram of residuals") +
+  theme_bw()
+
+aug %>% 
+  ACF(.resid) %>% 
+  autoplot() + 
+  ggtitle("ACF of residuals") +
+  theme_bw()
+
+# Ou ainda
+google_2015 %>%
+  model(NAIVE(Close)) %>%
+  gg_tsresiduals()
+```
+
+  Esses gráficos mostram que o método Naive produz previsões que parecem dar conta de todas as
+informações disponíveis. A média dos resíduos é próxima de zero e não há correlação significativa na
+série de resíduos. 
+
+  O gráfico de tempo dos resíduos mostra que a variação dos resíduos permanece praticamente a mesma nos dados históricos, além do que é mais externo e, portanto, a variação residual pode ser tratada como constante. 
+  
+  Isso também pode ser visto no histograma dos resíduos. O histograma sugere que os resíduos podem não
+ser normais - a cauda direita parece um pouco longa demais, mesmo quando ignoramos os valores extremos.
+  Consequentemente, as previsões desse método provavelmente serão muito boas, mas os intervalos de
+previsão calculados assumindo uma distribuição normal podem ser imprecisos.
+
+## Testes de Portmanteau para autocorrelação
+
+  Além de examinar o gráfico da ACF, também podemos fazer um teste mais formal para autocorrelação
+considerando um conjunto inteiro de $r_k$ valores como um grupo, em vez de tratar cada um
+separadamente.
+
+  Lembre-se que $r_k$ é a autocorrelação para lag k. Quando olhamos para o gráfico da ACF para ver se
+cada pico está dentro dos limites exigidos, estamos implicitamente executando vários testes de
+hipóteses, cada um com uma pequena probabilidade de dar um falso positivo. Quando um número suficiente
+desses testes é feito, é provável que pelo menos um dê um falso positivo e, portanto, podemos concluir
+que os resíduos têm alguma autocorrelação restante, quando na verdade eles não têm.
+
+  Para superar esse problema, testamos se as $j$ primeiras autocorrelações são significativamente
+diferentes do que seria esperado de um processo de ruído branco. Um teste para um grupo de
+autocorrelações é chamado de *teste de portmanteau*, a partir de uma palavra francesa que descreve uma
+mala contendo vários itens.
+
+  Um desses testes é o `teste Box-Pierce`, com base na seguinte estatística:
+  
+$$Q = T \sum_{k=1}^{j} r^2_k$$
+
+  Onde j é o lag máximo sendo considerado e T é o número de observações. Se cada $r_k$ está perto de
+zero, então Q será pequeno. Se alguns $r_k$ forem grandes (positivos ou negativos), então Q será
+grande. Sugerimos o uso de $j = 10$ para dados não sazonais e $j = 2m$ para dados sazonais, onde m
+é o período de sazonalidade. No entanto, o teste não é bom quando j é grande, portanto, se esses
+valores forem maiores que  $T / 5$, então use $j = T / 5$
+
+  Um teste relacionado (e mais preciso) é o `teste de Ljung-Box`, baseado em:
+
+$$Q^* = T(T+2) \sum_{k=1}^{j}(T-k)^{-1} r^2_k$$
+
+  Novamente, grandes valores de $Q^*$ sugerem que as autocorrelações não provêm de uma série de ruído
+branco.
+
+  Quão grande é muito grande? Se as autocorrelações vieram de uma série de ruído branco, então ambos
+$Q$ e $Q^*$ teria uma distribuição $\chi^2$ com $j-K$ graus de liberdade, onde K é o número de
+parâmetros no modelo. Se eles são calculados a partir de dados brutos (em vez dos resíduos de um
+modelo), defina $K=0$.
+
+  Para o exemplo de preço das ações do Google, o modelo Naive não possui parâmetros, portanto $K=0$
+nesse caso também.
+
+```{r resid_test_google}
+# lag=h and fitdf=K: l = 10, K = 0, df = 10 - 0 = 10
+aug %>% 
+  features(.resid, box_pierce, lag = 10, dof=0)
+
+aug %>% 
+  features(.resid, ljung_box, lag=10, dof=0)
+```
+
+Para ambos $Q$ e $Q^∗$, os resultados não são significativos (ou seja, os p-valores são relativamente
+grandes). Assim, podemos concluir que os resíduos não são distinguíveis de uma série de ruído branco,
+são não correlacionados.
+
+  Uma abordagem simples alternativa que pode ser apropriada para prever o preço das ações de fechamento
+diário do Google é o método de `drift`. A função `tidy()` mostra o único parâmetro estimado, o coeficiente de *drift*, medindo a variação diária média observada nos dados históricos.
+
+```{r drift_google_tidy}
+google_2015 %>% 
+  model(RW(Close ~ drift())) %>% 
+  tidy()
+
+google_2015 %>% 
+  model(RW(Close ~ drift())) %>% 
+   augment() %>% 
+      features(.resid, ljung_box, lag=10, dof=1)
+```
+
+Aplicando o teste de Ljung-Box, definimos $K=1$ para contabilizar o parâmetro estimado.
+
+
+  Como na abordagem Naive, os resíduos do método deriva são indistinguíveis de uma série de ruído
+branco, não há correlação nos resíduos.
+
+# Intervalos de confiança para $\hat{y}$
+
+## Tradicional
+
+ * Pressupondo Normalidade
+ 
+ $$IC(\hat{y}_{T+h|T}; \alpha \text{%}) = \hat{y}_{T+h|T} \pm Z_{\alpha / 2} * \sigma_h$$
+
+* `Average`: $\sigma_h = \sigma_{\epsilon} \sqrt{1 + 1/T}$
+
+* `Naive`: $\sigma_h = \sigma_{\epsilon} \sqrt{h}$
+
+* `Naive Sazonal`: $\sigma_h = \sigma_{\epsilon} \sqrt{k + 1}$, onde k é a parte inteira de $(h-1)/m$
+e m é o período sazonal.
+
+* `Drift`: $\sigma_h = \sigma_{\epsilon} \sqrt{h (1 + h/T)}$
+
+  A função `hilo()` converte as distribuições de previsão em intervalos. Por padrão, os intervalos de
+previsão de 80% e 95% são retornados, embora outras opções sejam possíveis por meio do argumento level.
+
+```{r int_confianca_hilo_google}
+# Exemplo Naive
+google_2015 %>%
+  model(NAIVE(Close)) %>%
+  forecast(h = 10) %>%
+    hilo() 
+```
+
+## Bootstrapping
+
+  Quando uma distribuição normal para os resíduos é uma suposição irracional, uma alternativa é usar o
+bootstrapping, que pressupõe apenas que os resíduos não estejam correlacionados.
+
+  Um erro de previsão 'one step' é definido como: $\epsilon_t = y_t - \hat{y}_{t|t-1}$. Podemos
+reescrever isso como $y_t = \hat{y}_{T|T-1} + \epsilon_t$. 
+
+  Assim, podemos simular a próxima observação de uma série temporal usando $y_{T+1}=\hat{y}_{T+1|T} + \epsilon_{T+1}$
+ 
+  Onde $\hat{y}_{T+1|T}$ é a previsão em uma etapa e $\epsilon_{T+1}$ é um erro futuro desconhecido.
+Supondo que erros futuros serão semelhantes aos erros anteriores, podemos substituir $\epsilon_{T+1}$
+por amostragem da coleção de erros que vimos no passado (isto é, os resíduos). Adicionando a nova
+observação simulada ao nosso conjunto de dados, podemos repetir o processo para obter:
+$y_{T+2}=\hat{y}_{T+2|T+1} +\epsilon_{T+2}$
+
+  Onde $\epsilon_{T+2}$ é outra amostra da coleção de resíduos. Continuando dessa maneira, podemos
+simular um conjunto inteiro de valores futuros para nossas séries temporais.
+
+  Fazendo isso repetidamente, obtemos muitos futuros possíveis.
+  
+  Em seguida, podemos calcular os intervalos de previsão calculando percentis para cada previsão. O
+resultado é chamado de intervalo de previsão `bootstrapped`.
+
+Tudo isso está embutido na função `forecast()`
+
+```{r int_confianca_boot_google}
+google_2015 %>%
+  model(NAIVE(Close)) %>%
+  forecast(h = 10, bootstrap = TRUE, times = 200) %>% # times é o tamanho das amostras do boot
+    hilo() 
+```
+
+## Forecast com decomposição
+
+  A decomposição de séries temporais (discutida no Capítulo 3) pode ser uma etapa útil na produção de
+previsões.
+  Assumindo uma decomposição aditiva, a série temporal decomposta pode ser escrita como:
+  
+$$y_t = \hat{S}_t + \hat{A}_t$$
+
+  Onde $\hat{A}_t = \hat{T}_t + \hat{R}_t$ é o componente com ajuste sazonal.
+
+  Ou, se uma decomposição multiplicativa tiver sido usada, podemos escrever:
+
+$$y_t = \hat{S}_t * \hat{A}_t$$
+
+  Onde $\hat{A}_t = \hat{T}_t * \hat{R}_t$ é o componente com ajuste sazonal.
+
+  Para prever uma série temporal decomposta, prevemos o componente sazonal, $\hat{S}_t$, e o componente
+com ajuste sazonal $\hat{A}_t$ separadamente. Geralmente, supõe-se que o componente sazonal seja
+imutável ou mude extremamente devagar; portanto, é previsto simplesmente com o último ano do componente
+estimado. Em outras palavras, um método Naive sazonal é usado para o componente sazonal.
+
+  Para prever o componente com ajuste sazonal, qualquer método de previsão não sazonal pode ser usado.
+  Por exemplo, um Random Walk com modelo drift, ou o método de Holt (discutido no capítulo 8), ou um
+modelo ARIMA não sazonal (discutido no capítulo 9), podem ser usados.
+  
+
+### Exemplo: Emprego no setor de varejo dos EUA
+
+```{r forecast_decomp, warning=FALSE, fig.align='center'}
+
+us_retail_employment <- us_employment %>%
+                          filter(year(Month) >= 1990, Title == "Retail Trade")
+
+us_retail_employment %>% 
+  head()
+
+(fit_dcmp <- us_retail_employment %>%
+              model(stlf = decomposition_model(STL(Employed ~ trend(window = 7), robust = TRUE),
+                                                NAIVE(season_adjust))))
+
+fit_dcmp %>%
+  forecast() %>%
+  autoplot(us_retail_employment)+
+  theme_bw()
+```
+
+Previsões do total de dados de emprego no varejo nos EUA com base em um modelo Naive dos dados
+dessazonalizados e um modelo Naive sazonal do componente sazonal, após uma decomposição dos dados
+pelo STL.
+
+Os intervalos de previsão mostrados neste gráfico são construídos da mesma maneira que as previsões
+pontuais. Ou seja, os limites superior e inferior dos intervalos de previsão nos dados dessazonalizados
+são "re-sazonalizados", adicionando nas previsões do componente sazonal.
+
+O ACF dos resíduos exibe autocorrelações significativas. Isso se deve ao método Naive não captar a
+tendência de mudança nas séries com ajuste sazonal.
+
+```{r forecast_decomp_resid, fig.align='center', warning=FALSE}
+
+fit_dcmp %>%
+  gg_tsresiduals() 
+```
+
+  Nos capítulos seguintes, estudamos métodos mais adequados que podem ser usados para prever o
+componente com ajuste sazonal, em vez do método Naive.
+  
+  
+# Mensurar Acurácia do Forecast
+
+## Treinamento e Teste
+
+  É importante avaliar a precisão da previsão usando previsões genuínas. Consequentemente, o tamanho dos
+resíduos não é uma indicação confiável de quão grandes são os erros reais de previsão. A precisão das
+previsões só pode ser determinada considerando-se o desempenho de um modelo em novos dados que não foram
+usados ao ajustá-lo.
+
+  Ao escolher modelos, é prática comum separar os dados disponíveis em duas partes, dados de treinamento
+e teste, em que os dados de treinamento são usados para estimar quaisquer parâmetros de um método de
+previsão e os dados de teste são usados para avaliar sua precisão. Como os dados de teste não são usados
+na determinação das previsões, eles devem fornecer uma indicação confiável de quão bem o modelo
+provavelmente fará previsões sobre novos dados.
+
+  O tamanho do conjunto de testes é tipicamente cerca de 20% da amostra total, embora esse valor dependa
+de quanto tempo a amostra é e de quanto tempo você deseja prever. O conjunto de teste deve idealmente ser
+pelo menos tão grande quanto o horizonte máximo de previsão necessário. Os seguintes pontos devem ser
+observados.
+
+* Um modelo que se encaixe bem nos dados de treinamento não será necessariamente bem previsto.
+
+* Um ajuste perfeito sempre pode ser obtido usando um modelo com parâmetros suficientes.
+
+* Ajustar demais um modelo aos dados é tão ruim quanto deixar de identificar um padrão sistemático nos
+dados.
+
+Algumas referências descrevem o conjunto de teste como o "conjunto de retenção", porque esses dados são
+"mantidos" fora dos dados usados para o ajuste. Outras referências chamam o conjunto de treinamento de
+“in-sample data” e o teste define os “out-sample data”. Preferimos usar "dados de treinamento" e "dados
+de teste" neste livro.
+
+## Erros de previsão
+
+  Um “erro” de previsão é a diferença entre um valor observado e sua previsão. Aqui "erro" não significa
+um erro, significa a parte imprevisível de uma observação. Pode ser escrito como:
+
+$$\epsilon_{T+h} = y_{T+h} - \hat{y}_{T+h|T}$$
+ Onde os dados de treinamento são fornecidos por $(y_1, ..., y_T)$ e os dados do teste são fornecidos 
+por $(y_{T+1}, y_{T+2}, ...)$.
+
+  Observe que os erros de previsão são diferentes dos resíduos de duas maneiras. Primeiro, os resíduos
+são calculados no conjunto de treinamento, enquanto os erros de previsão são calculados no conjunto de
+testes. Segundo, os resíduos são baseados em previsões em uma etapa, enquanto os erros de previsão podem
+envolver previsões em várias etapas.
+
+Podemos medir a precisão da previsão resumindo os erros de previsão de diferentes maneiras.
+
+### Erros dependentes da escala
+  
+  Os erros de previsão estão na mesma escala que os dados. Medidas de precisão baseadas apenas em 
+$\epsilon_t$ portanto, dependem da escala e não podem ser usadas para fazer comparações entre séries que
+envolvem unidades diferentes.
+
+As duas medidas dependentes de escala mais usadas são baseadas nos erros absolutos ou nos erros ao quadrado:
+
+$$ \text{Mean Absolute Error (Erro Absoluto Médio)}: MAE = mean(|\epsilon_t|)$$
+
+$$ \text{Root Mean Squared Error (Raiz do Erro Quadrático Médio)}: RMSE = \sqrt{mean(\epsilon_t^2)}$$
+
+  Ao comparar os métodos de previsão aplicados a uma única série temporal, ou a várias séries temporais
+com as mesmas unidades, o MAE é popular, pois é fácil entender e calcular. Um método de previsão que
+minimize o MAE levará a previsões da mediana, enquanto a minimização do RMSE levará a previsões da média.
+Consequentemente, o RMSE também é amplamente utilizado, apesar de ser mais difícil de interpretar.
+
+### Erros percentuais
+
+  O erro percentual é dado por $p_t = 100 \frac{\epsilon_t}{y_t}$. Os erros de porcentagem têm a 
+vantagem de não ter unidades e, portanto, são frequentemente usados para comparar o desempenho da
+previsão entre os conjuntos de dados. A medida mais usada é:
+
+$$ \text{Mean Absolute Percentage Error (Erro Percentual Absoluto Médio)}: MAPE = mean(|p_t|)$$
+
+  Medidas baseadas em erros percentuais têm a desvantagem de serem infinitas ou indefinidas se $y_t=0$
+para qualquer t no período de interesse e possui valores extremos, se houver $y_t$ perto de zero. Outro
+problema com os erros percentuais que geralmente são esquecidos é que eles assumem que a unidade de
+medida possui um zero significativo. Por exemplo, um erro percentual não faz sentido ao medir a precisão
+das previsões de temperatura nas escalas de Fahrenheit ou Celsius, porque a temperatura tem um ponto
+zero arbitrário.
+
+'Eles também têm a desvantagem de punir mais os erros negativos do que os positivos. Essa observação levou ao uso do chamado MAPE “simétrico” (sMAPE) proposto por Armstrong (1978, p. 348), utilizado na competição de previsão do M3. É definido por:
+
+$$ \text{sMAPE} = mean(200 * \frac{|y_t - \hat{y}_t|}{(y_t + \hat{y}_t)})$$
+
+  No entanto, se $y_t$ está perto de zero, $\hat{y}_t$ também é provável que esteja próximo de zero.
+  Assim, a medida ainda envolve a divisão por um número próximo de zero, tornando o cálculo instável.
+Além disso, o valor de sMAPE pode ser negativo, portanto, não é realmente uma medida de "erros
+percentuais absolutos".
+
+  Hyndman e Koehler (2006) recomendam que o sMAPE não seja usado. Ele está incluído aqui apenas porque é
+amplamente usado, embora não o usemos neste livro.
+
+### Erros de escala
+
+  Erros de escala foram propostos por Hyndman & Koehler (2006) como uma alternativa ao uso de erros de
+porcentagem ao comparar a precisão da previsão entre séries com unidades diferentes. Eles propuseram
+escalar os erros com base MAE de treino a partir de um método simples de previsão.
+
+Para séries temporais não sazonais, uma maneira útil de definir um erro de escala usa previsões Naive:
+
+$$q_j = \frac{\epsilon_j}{\frac{1}{T - 1} \sum_{t=2}^{T} |y_t - y_{t-1}|}$$
+
+  Como o numerador e o denominador envolvem valores na escala dos dados originais, $q_j$ é independente
+da escala dos dados. Um erro de escala é menor que 1 se resultar de uma previsão melhor do que a previsão
+Naive média calculada nos dados de treinamento. Por outro lado, é maior que 1 se a previsão for pior que
+a previsão Naive média calculada nos dados de treinamento.
+
+  Para séries temporais sazonais, um erro em escala pode ser definido usando previsões Naive sazonais:
+  
+$$q_j = \frac{\epsilon_j}{\frac{1}{T - m} \sum_{t=m + 1}^{T} |y_t - y_{t-m}|}$$
+  O Mean Absolute Scaled Error (Erro Médio Absoluto de Escala) é simplesmente $\text{MASE}= mean(|q_j|)$
+  
+  
+### Exemplo - Métricas
+```{r metricas_exemplo}
+cerveja_treino <- aus_production %>% 
+                        filter(between(year(Quarter), 1992, 2007)) # De 1992 à 2007
+
+cerveja_teste <- aus_production %>% 
+                        filter(year(Quarter) > 1992) # De 1992 à 2010, 2007 à 2010 será teste
+cerveja_treino %>% 
+  head()
+
+(cerveja_fits <- cerveja_treino %>% # 4 modelos
+                model(Media = MEAN(Beer),
+                      Naive = NAIVE(Beer),
+                      Naive_Sazonal = SNAIVE(Beer),
+                      Drift = RW(Beer ~ drift())))
+
+
+cerveja_pred <- cerveja_fits %>%
+                    forecast(h = 10)
+cerveja_pred %>% 
+  head()
+
+cerveja_pred %>%
+  autoplot(cerveja_teste, level = NULL) +
+  xlab("Year") + ylab("Megalitres") +
+  ggtitle("Forecasts for quarterly beer production") +
+  guides(colour=guide_legend(title = "Forecast")) +
+theme_bw()
+
+forecast::accuracy(cerveja_pred, cerveja_teste) %>% 
+  select(.model, RMSE, MAE, MAPE, MASE)
+```
+
+  É óbvio no gráfico que o método Naive sazonal é melhor para esses dados, embora ainda possa ser
+aprimorado, como descobriremos mais adiante. Às vezes, diferentes medidas de precisão levam a resultados
+diferentes sobre qual o melhor método de previsão.
+
+## Cross-Validation
+
+  Uma versão mais sofisticada dos conjuntos de treinamento / teste é a validação cruzada
+(Cross-Validation) de séries temporais. Neste procedimento, há uma série de conjuntos de testes, cada um
+consistindo em uma única observação. 
+
+  O conjunto de treinamento correspondente consiste apenas em observações que ocorreram antes da
+observação que forma o conjunto de testes. Portanto, nenhuma observação futura pode ser usada na
+construção da previsão. Como não é possível obter uma previsão confiável com base em um pequeno conjunto
+de treinamento, as primeiras observações não são consideradas como conjuntos de teste.
+
+O diagrama a seguir ilustra a série de conjuntos de treinamento e teste, onde as observações azuis 
+formam os conjuntos de treinamento e as observações vermelhas formam os conjuntos de teste.
+
+![](https://otexts.com/fpp3/fpp_files/figure-html/cv1-1.svg)
+
+  A precisão da previsão é calculada calculando a média dos conjuntos de testes. Às vezes, esse
+procedimento é conhecido como "avaliação de uma origem de previsão contínua", porque a "origem" na qual
+a previsão é baseada se move no tempo.
+
+  Com a previsão de séries temporais, as previsões em uma etapa podem não ser tão relevantes quanto as
+previsões em várias etapas. Nesse caso, o procedimento de validação cruzada com base em uma origem de
+previsão contínua pode ser modificado para permitir que erros de várias etapas sejam usados. Suponha que
+estamos interessados em modelos que produzam boas previsões 4 períodos à frente. Então o diagrama
+correspondente é mostrado abaixo.
+
+![](https://otexts.com/fpp3/fpp_files/figure-html/cv4-1.svg)
+
+## Exempo l
+
+No exemplo a seguir, comparamos a precisão obtida por meio da validação cruzada de séries temporais com 
+a precisão residual.
+
+```{r exemp_l}
+google_2015 %>% # Base utilizada
+  head(10)
+
+# Time series cross-validation accuracy
+google_2015_tr <- google_2015 %>% # Formato para cross-validation
+                      slice(1:(n()-1)) %>%
+                        stretch_tsibble(.init = 3, .step = 1)
+
+google_2015_tr %>% 
+  head(15)
+
+fc <- google_2015_tr %>% # Forecast baseado na Cross-Validation
+        model(RW(Close ~ drift())) %>%
+          forecast(h = 1)
+
+fc %>% 
+  head(15)
+
+fc %>%  # Acurácia no CV
+  accuracy(google_2015)
+
+# Residual accuracy
+google_2015 %>% # Acurácia Sem CV
+  model(RW(Close ~ drift())) %>%
+    accuracy()
+```
+
+Como esperado, as medidas de precisão dos resíduos são menores, pois as "previsões" correspondentes são
+baseadas em um modelo ajustado a todo o conjunto de dados, em vez de serem previsões verdadeiras.
+
+Uma boa maneira de escolher o melhor modelo de previsão é encontrar o modelo com o menor RMSE calculado
+usando a validação cruzada de séries temporais.
+
+## Exempo ll
+
+O subconjunto google_2015 dos dados gafa_stock, inclui o preço das ações diárias de fechamento do Google
+Inc na bolsa de valores NASDAQ para todos os dias de negociação em 2015.
+
+O código abaixo avalia o desempenho da previsão de previsões Drift de 1 a 8 passos à frente. O gráfico mostra que o erro de previsão aumenta à medida que o horizonte de previsão aumenta, como seria de esperar.
+
+```{r exemp_ll, fig.align='center'}
+google_2015_tr <- google_2015 %>%
+                    slice(1:(n()-8)) %>%
+                      stretch_tsibble(.init = 3, .step = 1)
+
+fc <- google_2015_tr %>%
+        model(RW(Close ~ drift())) %>%
+          forecast(h = 8) %>%
+            group_by(.id) %>%
+              mutate(h = row_number()) %>%
+              ungroup()
+
+fc %>%
+  accuracy(google_2015, by = "h") %>%
+  ggplot(aes(x = h, y = RMSE)) +
+  geom_point() +
+  theme_bw()
+```
+
+
